@@ -77,6 +77,25 @@ const REGION_COORDS: Record<string, { lat: number, lng: number }> = {
 
 const REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region' });
 
+// Major US/CA Area Code approximations for enhanced tracking precision
+const NANP_COORDS: Record<string, { lat: number, lng: number }> = {
+  '212': { lat: 40.7128, lng: -74.0060 }, // NY
+  '310': { lat: 34.0522, lng: -118.2437 }, // LA
+  '415': { lat: 37.7749, lng: -122.4194 }, // SF
+  '312': { lat: 41.8781, lng: -87.6298 }, // Chicago
+  '305': { lat: 25.7617, lng: -80.1918 }, // Miami
+  '702': { lat: 36.1699, lng: -115.1398 }, // Vegas
+  '206': { lat: 47.6062, lng: -122.3321 }, // Seattle
+  '416': { lat: 43.6510, lng: -79.3470 }, // Toronto
+  '604': { lat: 49.2827, lng: -123.1207 }, // Vancouver
+  '514': { lat: 45.5017, lng: -73.5673 }, // Montreal
+  '202': { lat: 38.9072, lng: -77.0369 }, // DC
+  '404': { lat: 33.7490, lng: -84.3880 }, // Atlanta
+  '617': { lat: 42.3601, lng: -71.0589 }, // Boston
+  '214': { lat: 32.7767, lng: -96.7970 }, // Dallas
+  '713': { lat: 29.7604, lng: -95.3698 }, // Houston
+};
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const number = searchParams.get('number');
@@ -86,7 +105,12 @@ export async function GET(req: Request) {
   }
 
   let query = number.trim();
-  if (!query.startsWith('+') && !query.startsWith('00')) {
+  const digitsOnly = query.replace(/\D/g, '');
+  
+  // Auto-detect NANP (+1 for US/Canada) if it's exactly 10 digits
+  if (digitsOnly.length === 10 && !query.startsWith('+') && !query.startsWith('00')) {
+      query = '+1' + digitsOnly;
+  } else if (!query.startsWith('+') && !query.startsWith('00')) {
       query = '+' + query;
   }
 
@@ -120,7 +144,15 @@ export async function GET(req: Request) {
          lineType = 'MOBILE';
       }
 
-      const coords = REGION_COORDS[regionCode];
+      let coords = REGION_COORDS[regionCode];
+      
+      // Override with precise area code coordinates for NANP
+      if (countryCode === 1) {
+          const areaCode = String(nationalNumber).substring(0, 3);
+          if (NANP_COORDS[areaCode]) {
+              coords = NANP_COORDS[areaCode];
+          }
+      }
 
       return NextResponse.json({
           query: number,
