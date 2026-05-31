@@ -130,6 +130,7 @@ export default function Dashboard() {
     earthquakes: true,
     fires: false,
     weather: false,
+    service_mesh: true,
     radiation: false,
     infrastructure: false,
     global_incidents: true,
@@ -368,6 +369,11 @@ export default function Dashboard() {
       fetchEndpoint('/api/infrastructure', d => ({ infrastructure: d.infrastructure }));
       layerFetchedRef.current.add('infrastructure');
     }
+    // Service Mesh (Uptime Kuma)
+    if (activeLayers.service_mesh && !layerFetchedRef.current.has('service_mesh')) {
+      fetchEndpoint('/api/uptime', d => ({ uptime_services: d.services, uptime_summary: d.summary }));
+      layerFetchedRef.current.add('service_mesh');
+    }
     // Global Incidents (GDELT)
     if (activeLayers.global_incidents && !layerFetchedRef.current.has('gdelt')) {
       fetchEndpoint('/api/gdelt', d => ({ gdelt: d.events }));
@@ -391,6 +397,9 @@ export default function Dashboard() {
     }
     if (activeLayers.maritime) {
       intervals.push(setInterval(() => fetchEndpoint('/api/maritime', d => ({ maritime_ports: d.ports, maritime_chokepoints: d.chokepoints, maritime_ships: d.ships })), 10000)); // 10s
+    }
+    if (activeLayers.service_mesh) {
+      intervals.push(setInterval(() => fetchEndpoint('/api/uptime', d => ({ uptime_services: d.services, uptime_summary: d.summary })), 60000)); // 1m
     }
     return () => intervals.forEach(clearInterval);
   }, [activeLayers, fetchEndpoint]);

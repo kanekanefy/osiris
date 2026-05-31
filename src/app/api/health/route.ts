@@ -16,6 +16,7 @@ export async function GET() {
       '/api/markets',
       '/api/frontlines',
       '/api/region-dossier',
+      '/api/uptime',
     ],
   });
 }
