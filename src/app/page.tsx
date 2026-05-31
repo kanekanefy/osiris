@@ -16,10 +16,13 @@ import KeyboardShortcuts from '@/components/KeyboardShortcuts';
 import GlobalStatusBar from '@/components/GlobalStatusBar';
 import LiveAlerts from '@/components/LiveAlerts';
 
+const DEFAULT_VIEW = { latitude: 39.5, longitude: -98.35, zoom: 3.45 };
+
 const OsirisMap = dynamic(() => import('@/components/OsirisMap'), { ssr: false });
 const LayerPanel = dynamic(() => import('@/components/LayerPanel'));
 const CameraViewer = dynamic(() => import('@/components/CameraViewer'));
 const OsintPanel = dynamic(() => import('@/components/OsintPanel'));
+const ServiceMonitorPanel = dynamic(() => import('@/components/ServiceMonitorPanel'));
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
@@ -87,8 +90,8 @@ export default function Dashboard() {
   const data = dataRef.current;
 
   const [backendStatus, setBackendStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
-  const [mapView, setMapView] = useState({ zoom: 2.5, latitude: 20 });
-  const [flyToLocation, setFlyToLocation] = useState<{ lat: number; lng: number; ts: number } | null>(null);
+  const [mapView, setMapView] = useState(DEFAULT_VIEW);
+  const [flyToLocation, setFlyToLocation] = useState<{ lat: number; lng: number; zoom?: number; ts: number } | null>(null);
   const [globalStats, setGlobalStats] = useState<any>(null);
   const mouseCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const coordsDisplayRef = useRef<HTMLDivElement>(null);
@@ -157,8 +160,13 @@ export default function Dashboard() {
     const lon = parseFloat(p.get('lon') || '');
     const zoom = parseFloat(p.get('zoom') || '');
     if (!isNaN(lat) && !isNaN(lon)) {
-      setFlyToLocation({ lat, lng: lon, ts: Date.now() });
-      if (!isNaN(zoom)) setMapView(v => ({ ...v, zoom }));
+      setFlyToLocation({ lat, lng: lon, zoom: !isNaN(zoom) ? zoom : undefined, ts: Date.now() });
+      setMapView(v => ({
+        ...v,
+        latitude: lat,
+        longitude: lon,
+        zoom: !isNaN(zoom) ? zoom : v.zoom,
+      }));
     }
     const layers = p.get('layers');
     if (layers) {
@@ -178,8 +186,8 @@ export default function Dashboard() {
     if (urlTimer.current) clearTimeout(urlTimer.current);
     urlTimer.current = setTimeout(() => {
       const p = new URLSearchParams();
-      p.set('lat', (mapView.latitude ?? 20).toFixed(4));
-      p.set('lon', '0');
+      p.set('lat', (mapView.latitude ?? DEFAULT_VIEW.latitude).toFixed(4));
+      p.set('lon', (mapView.longitude ?? DEFAULT_VIEW.longitude).toFixed(4));
       p.set('zoom', mapView.zoom.toFixed(2));
       const active = Object.entries(activeLayers).filter(([,v]) => v).map(([k]) => k).join(',');
       p.set('layers', active);
@@ -210,7 +218,10 @@ export default function Dashboard() {
       if (e.key === 'm') setShowMarkets(p => !p);
       if (e.key === 'c') setShowScmPanel(p => !p);
       if (e.key === 'i') setShowIntel(p => !p);
-      if (e.key === 'r') setFlyToLocation({ lat: 20, lng: 0, ts: Date.now() });
+      if (e.key === 'r') {
+        setFlyToLocation({ lat: DEFAULT_VIEW.latitude, lng: DEFAULT_VIEW.longitude, zoom: DEFAULT_VIEW.zoom, ts: Date.now() });
+        setMapView(DEFAULT_VIEW);
+      }
       if (e.key === 'g') setMapProjection(p => p === 'globe' ? 'mercator' : 'globe');
     };
     const fsHandler = () => setIsFullscreen(!!document.fullscreenElement);
@@ -255,6 +266,11 @@ export default function Dashboard() {
       const res = await fetch(`/api/region-dossier?lat=${coords.lat}&lng=${coords.lng}`);
       if (res.ok) setRegionDossier(await res.json());
     } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); } finally { setDossierLoading(false); }
+  }, []);
+
+  const navigateTo = useCallback((lat: number, lng: number, zoom?: number) => {
+    setFlyToLocation({ lat, lng, zoom, ts: Date.now() });
+    setMapView(v => ({ ...v, latitude: lat, longitude: lng, zoom: zoom ?? v.zoom }));
   }, []);
 
   // Entity click handler (hoisted from JSX to comply with Rules of Hooks — Fixes #113)
@@ -828,28 +844,29 @@ export default function Dashboard() {
                 <div><div className="hud-label">NUCLEAR</div><div className="hud-value text-[10px]" style={{ color: 'var(--accent-nuclear)' }}>{globalStats ? globalStats.nuclear.toLocaleString() : '0'}</div></div>
               </div>
             </motion.div>
-            <ViewPresets onNavigate={(lat, lng, zoom) => { setFlyToLocation({ lat, lng, ts: Date.now() }); setMapView(v => ({ ...v, zoom })); }} />
+            <ViewPresets onNavigate={(lat, lng, zoom) => { navigateTo(lat, lng, zoom); }} />
           </>
         )}
         {showScmPanel && <ScmPanel data={data} />}
         {showMarkets && <MarketsPanel data={data} spaceWeather={spaceWeather} />}
-        {showIntel && <IntelFeed data={data} onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} />}
+        {showIntel && <IntelFeed data={data} onLocate={(lat, lng) => navigateTo(lat, lng)} />}
       </div>
 
       {/* ── RIGHT HUD (desktop): Search + RECON + Live Alerts ── */}
       <div className="desktop-panel absolute right-5 top-20 bottom-24 w-80 flex flex-col gap-3 z-[200] pointer-events-auto overflow-y-auto styled-scrollbar pr-1">
         <div className="flex gap-2 items-start">
-          <div className="flex-1"><SearchBar onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} /></div>
+          <div className="flex-1"><SearchBar onLocate={(lat, lng) => navigateTo(lat, lng)} /></div>
           <div className="relative"><SharePanel mapView={mapView} activeLayers={activeLayers} mouseCoords={null} /></div>
         </div>
+        <ServiceMonitorPanel data={data} onLocate={navigateTo} />
         <OsintPanel onSweepVisualize={setSweepData} onScanGeolocate={(target, data) => {
           setScanTargets(prev => {
             const existing = prev.filter(t => t.id !== target);
             return [{ id: target, timestamp: Date.now(), ...data }, ...existing].slice(0, 10);
           });
-          setFlyToLocation({ lat: data.lat, lng: data.lng, ts: Date.now() });
+          navigateTo(data.lat, data.lng, 8);
         }} />
-        <LiveAlerts data={data} onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} onWatchFeed={(url, name) => { setLiveFeedUrl(url); setLiveFeedName(name); }} />
+        <LiveAlerts data={data} onLocate={(lat, lng) => navigateTo(lat, lng)} onWatchFeed={(url, name) => { setLiveFeedUrl(url); setLiveFeedName(name); }} />
       </div>
 
       {/* ── LIVE FEED VIEWER OVERLAY ── */}
@@ -993,15 +1010,18 @@ export default function Dashboard() {
                       </div>
                       <LayerPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} />
                       <div className="mt-2">
-                        <ViewPresets onNavigate={(lat, lng, zoom) => { setFlyToLocation({ lat, lng, ts: Date.now() }); setMapView(v => ({ ...v, zoom })); setMobilePanel(null); }} />
+                        <ServiceMonitorPanel data={data} onLocate={(lat, lng, zoom) => { navigateTo(lat, lng, zoom); setMobilePanel(null); }} />
+                      </div>
+                      <div className="mt-2">
+                        <ViewPresets onNavigate={(lat, lng, zoom) => { navigateTo(lat, lng, zoom); setMobilePanel(null); }} />
                       </div>
                     </>
                   )}
                   {mobilePanel === 'markets' && <MarketsPanel data={data} spaceWeather={spaceWeather} />}
-                  {mobilePanel === 'intel' && <IntelFeed data={data} onLocate={(lat, lng) => { setFlyToLocation({ lat, lng, ts: Date.now() }); setMobilePanel(null); }} />}
+                  {mobilePanel === 'intel' && <IntelFeed data={data} onLocate={(lat, lng) => { navigateTo(lat, lng); setMobilePanel(null); }} />}
                   {mobilePanel === 'search' && (
                     <div className="space-y-2">
-                      <SearchBar onLocate={(lat, lng) => { setFlyToLocation({ lat, lng, ts: Date.now() }); setMobilePanel(null); }} />
+                      <SearchBar onLocate={(lat, lng) => { navigateTo(lat, lng); setMobilePanel(null); }} />
                       <SharePanel mapView={mapView} activeLayers={activeLayers} mouseCoords={null} />
                     </div>
                   )}
@@ -1129,7 +1149,7 @@ export default function Dashboard() {
       <CameraViewer
         camera={activeCamera}
         onClose={() => setActiveCamera(null)}
-        onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })}
+        onLocate={(lat, lng) => navigateTo(lat, lng)}
       />
 
 

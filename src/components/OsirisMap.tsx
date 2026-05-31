@@ -10,8 +10,8 @@ interface OsirisMapProps {
   onEntityClick?: (entity: any) => void;
   onMouseCoords?: (coords: { lat: number; lng: number }) => void;
   onRightClick?: (coords: { lat: number; lng: number }) => void;
-  onViewStateChange?: (vs: { zoom: number; latitude: number }) => void;
-  flyToLocation?: { lat: number; lng: number; ts: number } | null;
+  onViewStateChange?: (vs: { zoom: number; latitude: number; longitude: number }) => void;
+  flyToLocation?: { lat: number; lng: number; zoom?: number; ts: number } | null;
   projection?: 'mercator' | 'globe';
   mapStyle?: string;
   sweepData?: any;
@@ -39,6 +39,8 @@ function computeSolarTerminator(): [number, number][] {
 }
 
 const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] };
+const SERVICE_DEFAULT_CENTER: [number, number] = [-98.35, 39.5];
+const SERVICE_DEFAULT_ZOOM = 3.45;
 
 function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, flyToLocation, projection = 'globe', mapStyle = 'dark', sweepData, scanTargets = [] }: OsirisMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -88,7 +90,7 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-      center: [25.48, 42.70], zoom: 6.5, minZoom: 1.5, maxZoom: 18,
+      center: SERVICE_DEFAULT_CENTER, zoom: SERVICE_DEFAULT_ZOOM, minZoom: 1.5, maxZoom: 18,
       attributionControl: false,
       maxPitch: 85,
     });
@@ -481,7 +483,7 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       }
     });
     map.on('contextmenu', e => { e.preventDefault(); onRightClick?.({ lat: e.lngLat.lat, lng: e.lngLat.lng }); });
-    map.on('moveend', () => { const c = map.getCenter(); onViewStateChange?.({ zoom: map.getZoom(), latitude: c.lat }); });
+    map.on('moveend', () => { const c = map.getCenter(); onViewStateChange?.({ zoom: map.getZoom(), latitude: c.lat, longitude: c.lng }); });
 
     // ── POPUP HELPER ──
     const popup = (coords: any, html: string) => {
@@ -841,6 +843,7 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
           <div><span style="color:#5C5A54;">CERT</span><br/><span style="color:${p.cert_valid === false || p.cert_valid === 'false' ? '#FF1744' : '#00E676'};">${p.cert_days_remaining ? Math.round(Number(p.cert_days_remaining)) + ' days' : '—'}</span></div>
           <div><span style="color:#5C5A54;">${geoLabel}</span><br/><span style="color:#E8E6E0;">${[p.city, p.country].filter(Boolean).join(', ') || 'Unknown'}</span></div>
         </div>
+        ${Number(p.site_total) > 1 ? `<div style="font-size:8px;color:#00E5FF;margin-bottom:8px;letter-spacing:0.08em;">SITE STACK ${p.site_index}/${p.site_total} · SPREAD FOR READABILITY</div>` : ''}
         <div style="font-size:9px;color:#8A8880;margin-bottom:8px;">${p.isp || ''}${p.asn ? ` / ${p.asn}` : ''}</div>
         ${p.url ? `<a href="${p.url}" target="_blank" style="${linkStyle}color:${color};border:1px solid ${color}55;background:${color}18;">OPEN SERVICE</a>` : ''}
       </div>`);
@@ -987,27 +990,56 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
 
   useEffect(() => {
     if (!mapReady) return;
-    setGeo('service-mesh', activeLayers.service_mesh && data.uptime_services ? data.uptime_services.map((s: any) => ({
-      type: 'Feature',
-      geometry: { type: 'Point', coordinates: [s.lng, s.lat] },
-      properties: {
-        name: s.name,
-        type: s.type,
-        url: s.url,
-        target: s.target,
-        ip: s.ip,
-        status_label: s.status_label,
-        response_ms: s.response_ms,
-        cert_days_remaining: s.cert_days_remaining,
-        cert_valid: s.cert_valid,
-        risk: s.risk,
-        geo_kind: s.geo_kind,
-        city: s.city,
-        country: s.country,
-        isp: s.isp,
-        asn: s.asn,
-      },
-    })) : []);
+    if (!activeLayers.service_mesh || !data.uptime_services) {
+      setGeo('service-mesh', []);
+      return;
+    }
+
+    const siteCounts = new Map<string, number>();
+    const siteIndex = new Map<string, number>();
+    const siteKey = (s: any) => `${s.geo_kind || 'geo'}|${s.city || ''}|${s.country || ''}|${Number(s.lat || 0).toFixed(2)}|${Number(s.lng || 0).toFixed(2)}`;
+    data.uptime_services.forEach((s: any) => {
+      const key = siteKey(s);
+      siteCounts.set(key, (siteCounts.get(key) || 0) + 1);
+    });
+
+    setGeo('service-mesh', data.uptime_services.map((s: any) => {
+      const key = siteKey(s);
+      const total = siteCounts.get(key) || 1;
+      const index = siteIndex.get(key) || 0;
+      siteIndex.set(key, index + 1);
+      const angle = (index / Math.max(total, 1)) * Math.PI * 2;
+      const ring = total > 1 ? Math.floor(index / 10) : 0;
+      const radius = total > 1 ? Math.min(1.15, 0.28 + total * 0.035 + ring * 0.18) : 0;
+      const lat = Number(s.lat);
+      const lng = Number(s.lng);
+      const latOffset = radius ? Math.sin(angle) * radius : 0;
+      const lngOffset = radius ? Math.cos(angle) * radius / Math.max(0.35, Math.cos(lat * Math.PI / 180)) : 0;
+
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lng + lngOffset, lat + latOffset] },
+        properties: {
+          name: s.name,
+          type: s.type,
+          url: s.url,
+          target: s.target,
+          ip: s.ip,
+          status_label: s.status_label,
+          response_ms: s.response_ms,
+          cert_days_remaining: s.cert_days_remaining,
+          cert_valid: s.cert_valid,
+          risk: s.risk,
+          geo_kind: s.geo_kind,
+          city: s.city,
+          country: s.country,
+          isp: s.isp,
+          asn: s.asn,
+          site_total: total,
+          site_index: index + 1,
+        },
+      };
+    }));
   }, [mapReady, data.uptime_services, activeLayers.service_mesh, setGeo]);
 
   useEffect(() => {
@@ -1459,7 +1491,7 @@ function OsirisMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
   // Fly-to
   useEffect(() => {
     if (!mapReady || !mapRef.current || !flyToLocation) return;
-    mapRef.current.flyTo({ center: [flyToLocation.lng, flyToLocation.lat], zoom: 8, duration: 2000 });
+    mapRef.current.flyTo({ center: [flyToLocation.lng, flyToLocation.lat], zoom: flyToLocation.zoom ?? 8, duration: 2000 });
   }, [mapReady, flyToLocation]);
 
   // Dynamic projection switching (lightweight — no terrain DEM)

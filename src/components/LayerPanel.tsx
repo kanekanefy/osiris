@@ -17,6 +17,15 @@ interface LayerPanelProps {
 
 const LAYER_GROUPS = [
   {
+    label: '公司服务监测',
+    icon: Server,
+    color: '#00E5FF',
+    featured: true,
+    layers: [
+      { key: 'service_mesh', label: '公司服务监测', icon: Server, color: '#00E5FF', dataKey: 'uptime_services' },
+    ],
+  },
+  {
     label: 'OSIRIS SDK',
     icon: Network,
     color: '#1565C0',
@@ -69,7 +78,6 @@ const LAYER_GROUPS = [
     color: '#FF3D3D',
     layers: [
       { key: 'infrastructure', label: 'Nuclear Facilities', icon: Radiation, color: '#76FF03', dataKey: 'infrastructure' },
-      { key: 'service_mesh', label: 'Service Mesh', icon: Server, color: '#00E5FF', dataKey: 'uptime_services' },
       { key: 'global_incidents', label: 'Global Incidents', icon: AlertTriangle, color: '#FF3D3D', dataKey: 'gdelt' },
       { key: 'gps_jamming', label: 'GPS Jamming', icon: Radio, color: '#FF4444', dataKey: 'gps_jamming' },
     ],
@@ -149,17 +157,18 @@ function LayerPanel({ data, activeLayers, setActiveLayers }: LayerPanelProps) {
           const groupActiveCount = group.layers.filter(l => activeLayers[l.key]).length;
           const allActive = groupActiveCount === group.layers.length;
           const GroupIcon = group.icon;
+          const isFeatured = Boolean((group as any).featured);
 
           return (
-            <div key={group.label}>
+            <div key={group.label} className={isFeatured ? 'mb-2 rounded-md border border-[var(--cyan-primary)]/20 bg-[var(--cyan-primary)]/[0.035] p-1 shadow-[0_0_22px_rgba(0,229,255,0.08)]' : ''}>
               {/* Group Header */}
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => toggleGroup(group.label)}
-                  className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-white/[0.03] transition-colors"
+                  className={`flex-1 flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-white/[0.03] transition-colors ${isFeatured ? 'py-2' : ''}`}
                 >
                   <GroupIcon className="w-3 h-3 stroke-[1.5] flex-shrink-0" style={{ color: group.color }} />
-                  <span className="text-[9px] font-mono tracking-[0.15em] text-[var(--text-secondary)] font-bold flex-1 text-left">{group.label}</span>
+                  <span className={`${isFeatured ? 'text-[11px]' : 'text-[9px]'} font-mono tracking-[0.15em] text-[var(--text-secondary)] font-bold flex-1 text-left`}>{group.label}</span>
                   <span className="text-[8px] font-mono tabular-nums" style={{ color: groupActiveCount > 0 ? group.color : 'var(--text-muted)' }}>
                     {groupActiveCount}/{group.layers.length}
                   </span>
